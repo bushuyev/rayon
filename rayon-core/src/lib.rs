@@ -60,9 +60,9 @@
 //! restrictive tilde or inequality requirements for `rayon-core`.  The
 //! conflicting requirements will need to be resolved before the build will
 //! succeed.
-
+#![feature(mutex_unpoison)]
 #![deny(missing_debug_implementations)]
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 #![deny(unreachable_pub)]
 #![warn(rust_2018_idioms)]
 
@@ -83,7 +83,7 @@ mod broadcast;
 mod job;
 mod join;
 mod latch;
-mod registry;
+pub mod registry;
 mod scope;
 mod sleep;
 mod spawn;
@@ -92,6 +92,7 @@ mod unwind;
 
 mod compile_fail;
 mod test;
+use wasm_bindgen::prelude::*;
 
 pub use self::broadcast::{broadcast, spawn_broadcast, BroadcastContext};
 pub use self::join::{join, join_context};
@@ -105,6 +106,17 @@ pub use self::thread_pool::ThreadPool;
 pub use self::thread_pool::{yield_local, yield_now, Yield};
 
 use self::registry::{CustomSpawn, DefaultSpawn, ThreadSpawn};
+use my_log::{trace};
+//
+// #[wasm_bindgen]
+// extern "C" {
+//     #[wasm_bindgen(js_namespace = console)]
+//     fn log(s: &str);
+// }
+
+fn log(s: &str) {
+    trace!("rayon: {}", s);
+}
 
 /// Returns the maximum number of threads that Rayon supports in a single thread-pool.
 ///

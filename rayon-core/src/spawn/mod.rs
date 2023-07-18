@@ -1,6 +1,6 @@
 use crate::job::*;
 use crate::registry::Registry;
-use crate::unwind;
+use crate::{log, unwind};
 use std::mem;
 use std::sync::Arc;
 
@@ -95,6 +95,7 @@ where
         let registry = Arc::clone(registry);
         move || {
             registry.catch_unwind(func);
+            log("rayon: spawn_job registry.terminate");
             registry.terminate(); // (*) permit registry to terminate now
         }
     })

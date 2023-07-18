@@ -1,3 +1,4 @@
+cargo-features = ["per-package-target"]
 [package]
 name = "rayon-core"
 version = "1.11.0"
@@ -15,12 +16,23 @@ readme = "README.md"
 keywords = ["parallel", "thread", "concurrency", "join", "performance"]
 categories = ["concurrency"]
 
+#forced-target = "wasm32-unknown-unknown"
+#forced-runner = 'wasm-bindgen-test-runner'
+
 # Some dependencies may not be their latest version, in order to support older rustc.
 [dependencies]
 num_cpus = "1.2"
-crossbeam-channel = "0.5.0"
-crossbeam-deque = "0.8.1"
-crossbeam-utils = "0.8.0"
+#crossbeam-channel = "0.5.8"
+#crossbeam-deque = "0.8.3"
+#crossbeam-utils = "0.8.15"
+crossbeam-channel = {path= "../../crossbeam/crossbeam-channel"}
+crossbeam-deque = {path= "../../crossbeam/crossbeam-deque"}
+crossbeam-utils = {path= "../../crossbeam/crossbeam-utils"}
+
+
+wasm-bindgen = {path= "../../wasm-bindgen"}
+env_logger = "0.10.0"
+my_log = {package = "log", version = "0.4.17"}
 
 [dev-dependencies]
 rand = "0.8"
@@ -29,6 +41,10 @@ scoped-tls = "1.0"
 
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"
+
+
+[patch.crates-io]
+wasm-bindgen = {path= "../../wasm-bindgen"}
 
 [[test]]
 name = "stack_overflow_crash"

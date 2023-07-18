@@ -3,8 +3,9 @@
 //!
 //! [`ThreadPool`]: struct.ThreadPool.html
 
+use std::backtrace::Backtrace;
 use crate::broadcast::{self, BroadcastContext};
-use crate::join;
+use crate::{join, log};
 use crate::registry::{Registry, ThreadSpawn, WorkerThread};
 use crate::scope::{do_in_place_scope, do_in_place_scope_fifo};
 use crate::spawn;
@@ -107,6 +108,8 @@ impl ThreadPool {
         OP: FnOnce() -> R + Send,
         R: Send,
     {
+        
+        log("rayon: install");
         self.registry.in_worker(|_, _| op())
     }
 
@@ -367,6 +370,8 @@ impl ThreadPool {
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
+        log(format!("rayon: Drop for ThreadPool: {}", Backtrace::capture()).as_ref());
+        panic!();
         self.registry.terminate();
     }
 }

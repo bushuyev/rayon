@@ -1,3 +1,4 @@
+cargo-features = ["per-package-target"]
 [package]
 name = "rayon"
 version = "1.7.0"
@@ -13,6 +14,8 @@ readme = "README.md"
 keywords = ["parallel", "thread", "concurrency", "join", "performance"]
 categories = ["concurrency"]
 exclude = ["/ci/*", "/scripts/*", "/.github/*", "/bors.toml"]
+forced-target = "wasm32-unknown-unknown"
+forced-runner = 'wasm-bindgen-test-runner'
 
 [workspace]
 members = ["rayon-demo", "rayon-core"]

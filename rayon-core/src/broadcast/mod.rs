@@ -5,6 +5,7 @@ use crate::scope::ScopeLatch;
 use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use crate::log;
 
 mod test;
 
@@ -134,6 +135,7 @@ where
         let registry = Arc::clone(registry);
         move || {
             registry.catch_unwind(|| BroadcastContext::with(&op));
+            log("rayon: spawn_broadcast_in registry.terminate");
             registry.terminate(); // (*) permit registry to terminate now
         }
     });

@@ -3,7 +3,7 @@ use crate::latch::{AsCoreLatch, CoreLatch, CountLatch, Latch, LatchRef, LockLatc
 use crate::log::Event::*;
 use crate::log::Logger;
 use crate::sleep::Sleep;
-use crate::unwind;
+use crate::{log, unwind};
 use crate::{
     ErrorKind, ExitHandler, PanicHandler, StartHandler, ThreadPoolBuildError, ThreadPoolBuilder,
     Yield,
@@ -12,6 +12,7 @@ use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
+use std::fmt::{Debug, Formatter};
 use std::hash::Hasher;
 use std::io;
 use std::mem;
@@ -129,7 +130,8 @@ where
     }
 }
 
-pub(super) struct Registry {
+
+pub struct Registry {
     logger: Logger,
     thread_infos: Vec<ThreadInfo>,
     sleep: Sleep,
@@ -155,6 +157,12 @@ pub(super) struct Registry {
     terminate_count: AtomicUsize,
 }
 
+impl Debug for Registry {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Registry").finish()
+    }
+}
+
 /// ////////////////////////////////////////////////////////////////////////
 /// Initialization
 
@@ -172,7 +180,7 @@ pub(super) fn global_registry() -> &'static Arc<Registry> {
 
 /// Starts the worker threads (if that has not already happened) with
 /// the given builder.
-pub(super) fn init_global_registry<S>(
+pub fn init_global_registry<S>(
     builder: ThreadPoolBuilder<S>,
 ) -> Result<&'static Arc<Registry>, ThreadPoolBuildError>
 where
@@ -209,6 +217,8 @@ fn default_global_registry() -> Result<Arc<Registry>, ThreadPoolBuildError> {
     // Notably, this allows current WebAssembly targets to work even though their threading support
     // is stubbed out, and we won't have to change anything if they do add real threading.
     let unsupported = matches!(&result, Err(e) if e.is_unsupported());
+    log(format!("default_global_registry: unsupported={}", unsupported).as_str());
+
     if unsupported && WorkerThread::current().is_null() {
         let builder = ThreadPoolBuilder::new()
             .num_threads(1)
@@ -243,6 +253,7 @@ struct Terminator<'a>(&'a Arc<Registry>);
 
 impl<'a> Drop for Terminator<'a> {
     fn drop(&mut self) {
+        log("rayon: Drop for Terminator");
         self.0.terminate()
     }
 }
@@ -254,6 +265,7 @@ impl Registry {
     where
         S: ThreadSpawn,
     {
+        log(format!("New Registry").as_str());
         // Soft-limit the number of threads that we can actually support.
         let n_threads = Ord::min(builder.get_num_threads(), crate::max_num_threads());
 
@@ -387,7 +399,7 @@ impl Registry {
     /// meant to be used for benchmarking purposes, primarily, so that
     /// you can get more consistent numbers by having everything
     /// "ready to go".
-    pub(super) fn wait_until_primed(&self) {
+    pub fn wait_until_primed(&self) {
         for info in &self.thread_infos {
             info.primed.wait();
         }
@@ -422,11 +434,20 @@ impl Registry {
         }
     }
 
+    // pub(super) fn reset(&self){
+    //     log(format!("reset").as_str());
+    // 
+    //     while !self.injected_jobs.is_empty() {
+    //         log(format!("stealing ").as_str());
+    //         self.injected_jobs.steal();
+    //     }
+    // }
+
     /// Push a job into the "external jobs" queue; it will be taken by
     /// whatever worker has nothing to do. Use this if you know that
     /// you are not on a worker of this registry.
     pub(super) fn inject(&self, injected_job: JobRef) {
-        self.log(|| JobsInjected { count: 1 });
+        // self.log(|| JobsInjected { count: 1 });
 
         // It should not be possible for `state.terminate` to be true
         // here. It is only set to true when the user creates (and
@@ -441,7 +462,12 @@ impl Registry {
 
         let queue_was_empty = self.injected_jobs.is_empty();
 
+        log(format!("inject 1 self.injected_jobs.len={:?}", self.injected_jobs.len()).as_str());
+        
         self.injected_jobs.push(injected_job);
+
+        log(format!("inject 2 self.injected_jobs.len={:?}", self.injected_jobs.len()).as_str());
+        
         self.sleep.new_injected_jobs(usize::MAX, 1, queue_was_empty);
     }
 
@@ -450,6 +476,7 @@ impl Registry {
     }
 
     fn pop_injected_job(&self, worker_index: usize) -> Option<JobRef> {
+        log(format!("pop_injected_job: injected_jobs worker_index={:?}", worker_index).as_str());
         loop {
             match self.injected_jobs.steal() {
                 Steal::Success(job) => {
@@ -511,10 +538,14 @@ impl Registry {
         unsafe {
             let worker_thread = WorkerThread::current();
             if worker_thread.is_null() {
+                log("rayon: in_worker: to in_worker_cold");
                 self.in_worker_cold(op)
             } else if (*worker_thread).registry().id() != self.id() {
+                log("rayon: in_worker: to in_worker_cross");
+                
                 self.in_worker_cross(&*worker_thread, op)
             } else {
+                log("rayon: in_worker: to in_worker thread");
                 // Perfectly valid to give them a `&T`: this is the
                 // current thread, so we know the data structure won't be
                 // invalidated until we return.
@@ -532,12 +563,15 @@ impl Registry {
         thread_local!(static LOCK_LATCH: LockLatch = LockLatch::new());
 
         LOCK_LATCH.with(|l| {
+            log("rayon: in_worker_cold: in latch");
             // This thread isn't a member of *any* thread pool, so just block.
             debug_assert!(WorkerThread::current().is_null());
             let job = StackJob::new(
                 |injected| {
                     let worker_thread = WorkerThread::current();
                     assert!(injected && !worker_thread.is_null());
+                    log("rayon: in_worker_cold: in job");
+                    
                     op(&*worker_thread, true)
                 },
                 LatchRef::new(l),
@@ -545,6 +579,8 @@ impl Registry {
             self.inject(job.as_job_ref());
             job.latch.wait_and_reset(); // Make sure we can use the same latch again next time.
 
+            log("rayon: in_worker_cold: after wait_and_reset");
+            
             // flush accumulated logs as we exit the thread
             self.logger.log(|| Flush);
 
@@ -608,6 +644,8 @@ impl Registry {
     /// dropped. The worker threads will gradually terminate, once any
     /// extant work is completed.
     pub(super) fn terminate(&self) {
+        log("rayon: terminate");
+        
         if self.terminate_count.fetch_sub(1, Ordering::AcqRel) == 1 {
             for (i, thread_info) in self.thread_infos.iter().enumerate() {
                 unsafe { CountLatch::set_and_tickle_one(&thread_info.terminate, self, i) };
@@ -814,10 +852,16 @@ impl WorkerThread {
         let abort_guard = unwind::AbortIfPanic;
 
         let mut idle_state = self.registry.sleep.start_looking(self.index, latch);
+
+        log(format!("rayon: wait_until_cold: latch.probe()={}", latch.probe()).as_str());
+        
         while !latch.probe() {
             if let Some(job) = self.find_work() {
                 self.registry.sleep.work_found(idle_state);
+                log(format!("rayon: wait_until_cold: before execute job in self.index={}", self.index).as_str());
                 self.execute(job);
+                log(format!("rayon: wait_until_cold: after execute job in self.index={}", self.index).as_str());
+                
                 idle_state = self.registry.sleep.start_looking(self.index, latch);
             } else {
                 self.registry
@@ -922,6 +966,9 @@ impl WorkerThread {
 /// ////////////////////////////////////////////////////////////////////////
 
 unsafe fn main_loop(thread: ThreadBuilder) {
+    let thread_index = thread.index;
+    log(format!("rayon: main_loop: thread.index={}", thread_index).as_str());
+    
     let worker_thread = &WorkerThread::from(thread);
     WorkerThread::set_current(worker_thread);
     let registry = &*worker_thread.registry;
@@ -959,10 +1006,14 @@ unsafe fn main_loop(thread: ThreadBuilder) {
     worker_thread.log(|| ThreadTerminate { worker: index });
 
     // Inform a user callback that we exited a thread.
+    log(format!("rayon: main_loop: worker_thread.index={}", worker_thread.index).as_str());
+    
     if let Some(ref handler) = registry.exit_handler {
         registry.catch_unwind(|| handler(index));
         // We're already exiting the thread, there's nothing else to do.
     }
+
+    log(format!("rayon: main_loop: thread.index={} done", thread_index).as_str());
 }
 
 /// If already in a worker-thread, just execute `op`.  Otherwise,

@@ -1,7 +1,7 @@
 use crate::job::StackJob;
 use crate::latch::SpinLatch;
 use crate::registry::{self, WorkerThread};
-use crate::unwind;
+use crate::{log, unwind};
 use std::any::Any;
 
 use crate::FnContext;
@@ -157,13 +157,17 @@ where
                     //
                     // Note that this could panic, but it's ok if we unwind here.
                     let result_b = job_b.run_inline(injected);
+                    log(format!("join_context  run_inline").as_str());
                     return (result_a, result_b);
+                    
                 } else {
+                    log(format!("join_context worker_thread.execute").as_str());
                     worker_thread.execute(job);
                 }
             } else {
                 // Local deque is empty. Time to steal from other
                 // threads.
+                log(format!("join_context worker_thread.wait_until").as_str());
                 worker_thread.wait_until(&job_b.latch);
                 debug_assert!(job_b.latch.probe());
                 break;

@@ -3,6 +3,7 @@
 #![deny(unreachable_pub)]
 #![warn(rust_2018_idioms)]
 
+
 //! Data-parallelism library that makes it easy to convert sequential
 //! computations into parallel
 //!
@@ -107,6 +108,7 @@ pub mod slice;
 pub mod str;
 pub mod string;
 pub mod vec;
+pub use rayon_core::registry;
 
 mod math;
 mod par_either;

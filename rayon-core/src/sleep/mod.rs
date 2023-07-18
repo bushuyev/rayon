@@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Condvar, Mutex};
 use std::thread;
 use std::usize;
+use crate::log;
 
 mod counters;
 pub(crate) use self::counters::THREADS_MAX;
@@ -36,6 +37,7 @@ pub(super) struct Sleep {
 /// reference for operations that preserve the idle state. (In other
 /// words, producing one of these structs is evidence the thread is
 /// idle.) It tracks state such as how long the thread has been idle.
+#[derive(Debug)]
 pub(super) struct IdleState {
     /// What is worker index of the idle thread?
     worker_index: usize,
@@ -63,6 +65,8 @@ const ROUNDS_UNTIL_SLEEPING: u32 = ROUNDS_UNTIL_SLEEPY + 1;
 
 impl Sleep {
     pub(super) fn new(logger: Logger, n_threads: usize) -> Sleep {
+        log(format!("rayon: Sleep::new: n_threads={:?}", n_threads).as_str());
+
         assert!(n_threads <= THREADS_MAX);
         Sleep {
             logger,
@@ -73,6 +77,8 @@ impl Sleep {
 
     #[inline]
     pub(super) fn start_looking(&self, worker_index: usize, latch: &CoreLatch) -> IdleState {
+        log(format!("rayon: Sleep::start_looking: worker_index={:?} latch={:?}", worker_index, latch).as_str());
+        
         self.logger.log(|| ThreadIdle {
             worker: worker_index,
             latch_addr: latch.addr(),
@@ -89,6 +95,8 @@ impl Sleep {
 
     #[inline]
     pub(super) fn work_found(&self, idle_state: IdleState) {
+        log(format!("rayon: Sleep::work_found: idle_state={:?}", idle_state).as_str());
+        
         self.logger.log(|| ThreadFoundWork {
             worker: idle_state.worker_index,
             yields: idle_state.rounds,
@@ -107,6 +115,10 @@ impl Sleep {
         latch: &CoreLatch,
         has_injected_jobs: impl FnOnce() -> bool,
     ) {
+        if idle_state.rounds > 30 {
+            log(format!("rayon: Sleep::no_work_found: idle_state={:?} latch={:?}", idle_state, latch).as_str());
+        }
+        
         if idle_state.rounds < ROUNDS_UNTIL_SLEEPY {
             thread::yield_now();
             idle_state.rounds += 1;
@@ -125,6 +137,8 @@ impl Sleep {
 
     #[cold]
     fn announce_sleepy(&self, worker_index: usize) -> JobsEventCounter {
+        log(format!("rayon: Sleep::announce_sleepy: worker_index={:?}", worker_index).as_str());
+        
         let counters = self
             .counters
             .increment_jobs_event_counter_if(JobsEventCounter::is_active);
@@ -143,6 +157,8 @@ impl Sleep {
         latch: &CoreLatch,
         has_injected_jobs: impl FnOnce() -> bool,
     ) {
+        log(format!("rayon: Sleep::sleep: idle_state={:?} latch={:?}", idle_state, latch).as_str());
+        
         let worker_index = idle_state.worker_index;
 
         if !latch.get_sleepy() {
@@ -166,6 +182,8 @@ impl Sleep {
                 latch_addr: latch.addr(),
             });
 
+            log(format!("rayon: Sleep::sleep: wake_fully {}", worker_index).as_str());
+
             idle_state.wake_fully();
             return;
         }
@@ -186,11 +204,15 @@ impl Sleep {
 
                 idle_state.wake_partly();
                 latch.wake_up();
+
+                log(format!("rayon: Sleep::sleep: worker_index={} wake_fully in loop", worker_index).as_str());
                 return;
             }
 
             // Otherwise, let's move from IDLE to SLEEPING.
             if self.counters.try_add_sleeping_thread(counters) {
+                log(format!("rayon: Sleep::sleep: worker_index={} try_add_sleeping_thread in loop", worker_index).as_str());
+                
                 break;
             }
         }
@@ -210,11 +232,13 @@ impl Sleep {
         // - we are the last active worker thread
         std::sync::atomic::fence(Ordering::SeqCst);
         if has_injected_jobs() {
+            log(format!("rayon: Sleep::sleep: has_injected_jobs").as_str());
             // If we see an externally injected job, then we have to 'wake
             // ourselves up'. (Ordinarily, `sub_sleeping_thread` is invoked by
             // the one that wakes us.)
             self.counters.sub_sleeping_thread();
         } else {
+            log(format!("rayon: Sleep::sleep: not has_injected_jobs").as_str());
             // If we don't see an injected job (the normal case), then flag
             // ourselves as asleep and wait till we are notified.
             //
@@ -232,6 +256,8 @@ impl Sleep {
         // Update other state:
         idle_state.wake_fully();
         latch.wake_up();
+
+        log(format!("rayon: Sleep::sleep: worker_index={} end", worker_index).as_str());
 
         self.logger.log(|| ThreadAwoken {
             worker: worker_index,
@@ -266,6 +292,7 @@ impl Sleep {
         num_jobs: u32,
         queue_was_empty: bool,
     ) {
+        log(format!("rayon: Sleep::new_injected_jobs source_worker_index={}, num_jobs={}, queue_was_empty={}", source_worker_index, num_jobs, queue_was_empty).as_str());
         // This fence is needed to guarantee that threads
         // as they are about to fall asleep, observe any
         // new jobs that may have been injected.
@@ -296,6 +323,8 @@ impl Sleep {
         num_jobs: u32,
         queue_was_empty: bool,
     ) {
+        log(format!("rayon: Sleep::new_internal_jobs source_worker_index={}, num_jobs={}, queue_was_empty={}", source_worker_index, num_jobs, queue_was_empty).as_str());
+        
         self.new_jobs(source_worker_index, num_jobs, queue_was_empty)
     }
 
@@ -305,6 +334,8 @@ impl Sleep {
         // Read the counters and -- if sleepy workers have announced themselves
         // -- announce that there is now work available. The final value of `counters`
         // with which we exit the loop thus corresponds to a state when
+        log(format!("rayon: Sleep::new_jobs source_worker_index={}, num_jobs={}, queue_was_empty={}", source_worker_index, num_jobs, queue_was_empty).as_str());
+        
         let counters = self
             .counters
             .increment_jobs_event_counter_if(JobsEventCounter::is_sleepy);
@@ -341,6 +372,7 @@ impl Sleep {
 
     #[cold]
     fn wake_any_threads(&self, mut num_to_wake: u32) {
+        log(format!("rayon: Sleep::wake_any_threads num_to_wake={} self.worker_sleep_states.len()={}", num_to_wake, self.worker_sleep_states.len()).as_str());
         if num_to_wake > 0 {
             for i in 0..self.worker_sleep_states.len() {
                 if self.wake_specific_thread(i) {
@@ -353,8 +385,19 @@ impl Sleep {
         }
     }
 
+
     fn wake_specific_thread(&self, index: usize) -> bool {
+        log(format!("rayon: Sleep::wake_specific_thread index={}", index).as_str());
+        
         let sleep_state = &self.worker_sleep_states[index];
+
+        // if sleep_state.is_blocked.is_poisoned() {
+        //     log(format!("rayon: Sleep::wake_specific_thread sleep_state poisoned, index={}", index).as_str());
+        //     
+        //     sleep_state.is_blocked.clear_poison();
+        //     
+        // }
+            
 
         let mut is_blocked = sleep_state.is_blocked.lock().unwrap();
         if *is_blocked {
