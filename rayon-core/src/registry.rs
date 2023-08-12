@@ -1,5 +1,5 @@
 use crate::job::{JobFifo, JobRef, StackJob};
-use crate::latch::{AsCoreLatch, CoreLatch, CountLatch, Latch, LatchRef, LockLatch, SpinLatch};
+use crate::latch::{AsCoreLatch, CoreLatch, Latch, LatchRef, LockLatch, OnceLatch, SpinLatch};
 use crate::log::Event::*;
 use crate::log::Logger;
 use crate::sleep::Sleep;
@@ -436,7 +436,7 @@ impl Registry {
 
     // pub(super) fn reset(&self){
     //     log(format!("reset").as_str());
-    // 
+    //
     //     while !self.injected_jobs.is_empty() {
     //         log(format!("stealing ").as_str());
     //         self.injected_jobs.steal();
@@ -463,11 +463,11 @@ impl Registry {
         let queue_was_empty = self.injected_jobs.is_empty();
 
         log(format!("inject 1 self.injected_jobs.len={:?}", self.injected_jobs.len()).as_str());
-        
+
         self.injected_jobs.push(injected_job);
 
         log(format!("inject 2 self.injected_jobs.len={:?}", self.injected_jobs.len()).as_str());
-        
+
         self.sleep.new_injected_jobs(usize::MAX, 1, queue_was_empty);
     }
 
@@ -542,7 +542,7 @@ impl Registry {
                 self.in_worker_cold(op)
             } else if (*worker_thread).registry().id() != self.id() {
                 log("rayon: in_worker: to in_worker_cross");
-                
+
                 self.in_worker_cross(&*worker_thread, op)
             } else {
                 log("rayon: in_worker: to in_worker thread");
@@ -571,7 +571,7 @@ impl Registry {
                     let worker_thread = WorkerThread::current();
                     assert!(injected && !worker_thread.is_null());
                     log("rayon: in_worker_cold: in job");
-                    
+
                     op(&*worker_thread, true)
                 },
                 LatchRef::new(l),
@@ -580,7 +580,7 @@ impl Registry {
             job.latch.wait_and_reset(); // Make sure we can use the same latch again next time.
 
             log("rayon: in_worker_cold: after wait_and_reset");
-            
+
             // flush accumulated logs as we exit the thread
             self.logger.log(|| Flush);
 
@@ -645,10 +645,10 @@ impl Registry {
     /// extant work is completed.
     pub(super) fn terminate(&self) {
         log("rayon: terminate");
-        
+
         if self.terminate_count.fetch_sub(1, Ordering::AcqRel) == 1 {
             for (i, thread_info) in self.thread_infos.iter().enumerate() {
-                unsafe { CountLatch::set_and_tickle_one(&thread_info.terminate, self, i) };
+                unsafe { OnceLatch::set_and_tickle_one(&thread_info.terminate, self, i) };
             }
         }
     }
@@ -678,10 +678,7 @@ struct ThreadInfo {
     /// This latch is *set* by the `terminate` method on the
     /// `Registry`, once the registry's main "terminate" counter
     /// reaches zero.
-    ///
-    /// NB. We use a `CountLatch` here because it has no lifetimes and is
-    /// meant for async use, but the count never gets higher than one.
-    terminate: CountLatch,
+    terminate: OnceLatch,
 
     /// the "stealer" half of the worker's deque
     stealer: Stealer<JobRef>,
@@ -692,7 +689,7 @@ impl ThreadInfo {
         ThreadInfo {
             primed: LockLatch::new(),
             stopped: LockLatch::new(),
-            terminate: CountLatch::new(),
+            terminate: OnceLatch::new(),
             stealer,
         }
     }
@@ -851,29 +848,37 @@ impl WorkerThread {
         // accesses, which would be *very bad*
         let abort_guard = unwind::AbortIfPanic;
 
-        let mut idle_state = self.registry.sleep.start_looking(self.index, latch);
+        'outer: while !latch.probe() {
+            // Check for local work *before* we start marking ourself idle,
+            // especially to avoid modifying shared sleep state.
+            if let Some(job) = self.take_local_job() {
+                self.execute(job);
+                continue;
+            }let mut idle_state = self.registry.sleep.start_looking(self.index, latch);
 
         log(format!("rayon: wait_until_cold: latch.probe()={}", latch.probe()).as_str());
-        
+
         while !latch.probe() {
             if let Some(job) = self.find_work() {
                 self.registry.sleep.work_found(idle_state);
                 log(format!("rayon: wait_until_cold: before execute job in self.index={}", self.index).as_str());
                 self.execute(job);
                 log(format!("rayon: wait_until_cold: after execute job in self.index={}", self.index).as_str());
-                
-                idle_state = self.registry.sleep.start_looking(self.index, latch);
-            } else {
-                self.registry
-                    .sleep
-                    .no_work_found(&mut idle_state, latch, || self.has_injected_job())
-            }
-        }
 
-        // If we were sleepy, we are not anymore. We "found work" --
-        // whatever the surrounding thread was doing before it had to
-        // wait.
-        self.registry.sleep.work_found(idle_state);
+                // The job might have injected local work, so go back to the outer loop.
+                    continue 'outer;
+                } else {
+                    self.registry
+                        .sleep
+                        .no_work_found(&mut idle_state, latch, || self.has_injected_job())
+                }
+            }
+
+            // If we were sleepy, we are not anymore. We "found work" --
+            // whatever the surrounding thread was doing before it had to wait.
+            self.registry.sleep.work_found(idle_state);
+            break;
+        }
 
         self.log(|| ThreadSawLatchSet {
             worker: self.index,
@@ -968,7 +973,7 @@ impl WorkerThread {
 unsafe fn main_loop(thread: ThreadBuilder) {
     let thread_index = thread.index;
     log(format!("rayon: main_loop: thread.index={}", thread_index).as_str());
-    
+
     let worker_thread = &WorkerThread::from(thread);
     WorkerThread::set_current(worker_thread);
     let registry = &*worker_thread.registry;
@@ -1007,7 +1012,7 @@ unsafe fn main_loop(thread: ThreadBuilder) {
 
     // Inform a user callback that we exited a thread.
     log(format!("rayon: main_loop: worker_thread.index={}", worker_thread.index).as_str());
-    
+
     if let Some(ref handler) = registry.exit_handler {
         registry.catch_unwind(|| handler(index));
         // We're already exiting the thread, there's nothing else to do.
