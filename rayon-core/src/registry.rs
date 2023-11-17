@@ -464,7 +464,7 @@ impl Registry {
     }
 
     fn pop_injected_job(&self) -> Option<JobRef> {
-        log(format!("pop_injected_job: injected_jobs worker_index={:?}", worker_index).as_str());
+        log(format!("pop_injected_job: injected_jobs ").as_str());
         loop {
             match self.injected_jobs.steal() {
                 Steal::Success(job) => return Some(job),
@@ -820,7 +820,7 @@ impl WorkerThread {
             if let Some(job) = self.take_local_job() {
                 self.execute(job);
                 continue;
-            }let mut idle_state = self.registry.sleep.start_looking(self.index, latch);
+            }
 
             let mut idle_state = self.registry.sleep.start_looking(self.index);
             while !latch.probe() {

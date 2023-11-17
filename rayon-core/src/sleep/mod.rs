@@ -84,7 +84,7 @@ impl Sleep {
 
     #[inline]
     pub(super) fn work_found(&self) {
-        log(format!("rayon: Sleep::work_found:").as_str())
+        log(format!("rayon: Sleep::work_found:").as_str());
         // If we were the last idle thread and other threads are still sleeping,
         // then we should wake up another thread.
         let threads_to_wake = self.counters.sub_inactive_thread();
@@ -235,7 +235,7 @@ impl Sleep {
     ///   We'll try to get at least one thread per job.
     #[inline]
     pub(super) fn new_injected_jobs(&self, num_jobs: u32, queue_was_empty: bool) {
-        log(format!("rayon: Sleep::new_injected_jobs source_worker_index={}, num_jobs={}, queue_was_empty={}", source_worker_index, num_jobs, queue_was_empty).as_str());
+        log(format!("rayon: Sleep::new_injected_jobs num_jobs={}, queue_was_empty={}", num_jobs, queue_was_empty).as_str());
         // This fence is needed to guarantee that threads
         // as they are about to fall asleep, observe any
         // new jobs that may have been injected.
@@ -268,7 +268,7 @@ impl Sleep {
         // Read the counters and -- if sleepy workers have announced themselves
         // -- announce that there is now work available. The final value of `counters`
         // with which we exit the loop thus corresponds to a state when
-        log(format!("rayon: Sleep::new_jobs source_worker_index={}, num_jobs={}, queue_was_empty={}", source_worker_index, num_jobs, queue_was_empty).as_str());
+        log(format!("rayon: Sleep::new_jobs num_jobs={}, queue_was_empty={}", num_jobs, queue_was_empty).as_str());
 
         let counters = self
             .counters
