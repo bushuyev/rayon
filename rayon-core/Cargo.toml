@@ -1,14 +1,14 @@
 cargo-features = ["per-package-target"]
 [package]
 name = "rayon-core"
-version = "1.11.0"
+version = "1.12.0"
 authors = ["Niko Matsakis <niko@alum.mit.edu>",
            "Josh Stone <cuviper@gmail.com>"]
 description = "Core APIs for Rayon"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rayon-rs/rayon"
 documentation = "https://docs.rs/rayon/"
-rust-version = "1.59"
+rust-version = "1.63"
 edition = "2021"
 links = "rayon-core"
 build = "build.rs"
@@ -21,11 +21,6 @@ categories = ["concurrency"]
 
 # Some dependencies may not be their latest version, in order to support older rustc.
 [dependencies]
-num_cpus = "1.2"
-#crossbeam-channel = "0.5.8"
-#crossbeam-deque = "0.8.3"
-#crossbeam-utils = "0.8.15"
-crossbeam-channel = {path= "../../crossbeam/crossbeam-channel"}
 crossbeam-deque = {path= "../../crossbeam/crossbeam-deque"}
 crossbeam-utils = {path= "../../crossbeam/crossbeam-utils"}
 
@@ -71,3 +66,7 @@ path = "tests/simple_panic.rs"
 [[test]]
 name = "scoped_threadpool"
 path = "tests/scoped_threadpool.rs"
+
+[[test]]
+name = "use_current_thread"
+path = "tests/use_current_thread.rs"
